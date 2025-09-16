@@ -1,0 +1,267 @@
+<!-- frontend/index.html -->
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Meal Feedback Prototype</title>
+  <style>
+    body{font-family:Inter, Arial;margin:0;background:#f4f6f9;padding:20px}
+    .container{max-width:900px;margin:0 auto}
+    header{display:flex;justify-content:space-between;align-items:center}
+    .card{background:#fff;padding:18px;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,0.06);margin-top:16px}
+    label{display:block;margin:8px 0 6px}
+    input, select, button, textarea{width:100%;padding:10px;border-radius:8px;border:1px solid #ddd}
+    button{background:#1976d2;color:#fff;border:none;padding:12px;font-weight:600;cursor:pointer}
+    button.secondary{background:#555}
+    #notifications{max-height:160px;overflow:auto}
+    .notif{padding:8px;border-bottom:1px solid #eee}
+    #chart{width:100%;height:300px}
+    .auth-row{display:flex;gap:12px}
+    .auth-row > *{flex:1}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🍽 Meal Feedback Prototype</h1>
+      <div>
+        <span id="userEmail">Not signed in</span>
+        <button id="btnSignOut" style="display:none">Sign out</button>
+      </div>
+    </header>
+
+    <div class="card" id="authCard">
+      <h3>Sign up / Sign in (Email)</h3>
+      <div class="auth-row">
+        <input id="email" placeholder="email@example.com"/>
+        <input id="password" type="password" placeholder="password"/>
+      </div>
+      <div style="margin-top:8px">
+        <button id="btnSignUp">Sign Up</button>
+        <button id="btnSignIn" class="secondary">Sign In</button>
+      </div>
+      <small style="color:#777">Use an email to sign up. Firebase handles auth.</small>
+    </div>
+
+    <div class="card">
+      <h3>Submit Feedback</h3>
+
+      <label>Meal (choose a meal id from server)</label>
+      <select id="mealSelect"></select>
+
+      <label>Rating (1-5)</label>
+      <select id="ratingSelect">
+        <option>1</option><option>2</option><option>3</option><option>4</option><option selected>5</option>
+      </select>
+
+      <label>Comment</label>
+      <textarea id="comment" rows="2"></textarea>
+
+      <label><input type="checkbox" id="anonymous"/> Submit anonymously</label>
+
+      <button id="btnSubmit">Submit Rating</button>
+    </div>
+
+    <div class="card">
+      <h3>Weekly Dashboard</h3>
+      <canvas id="chart"></canvas>
+      <div style="margin-top:12px">
+        <label>Choose canteen</label>
+        <select id="canteenSelect"></select>
+        <button id="btnRefresh">Refresh chart</button>
+      </div>
+      <div id="weeklyRaw"></div>
+    </div>
+
+    <div class="card">
+      <h3>Live Notifications</h3>
+      <div id="notifications">Waiting for notifications...</div>
+    </div>
+  </div>
+
+  <!-- libs -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <script>
+    // ---------- CONFIG: replace with your Firebase web config ----------
+    const firebaseConfig = {
+  apiKey: "AIzaSyALVMTPhKqUGuaQMsilYt1vH1VBF0DH7GI",
+  authDomain: "meal-feedback.firebaseapp.com",
+  projectId: "meal-feedback",
+  storageBucket: "meal-feedback.firebasestorage.app",
+  messagingSenderId: "359045152505",
+  appId: "1:359045152505:web:af75412b727e67c5306c28",
+  measurementId: "G-QRMC04M96S"
+};
+    // ------------------------------------------------------------------
+
+    // Backend API URL (local server) - change to your ngrok URL if deployed publicly
+    const API_URL = "http://localhost:5001";
+
+    // Initialize Firebase
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const firestore = firebase.firestore();
+
+    // UI references
+    const emailEl = document.getElementById('email');
+    const passEl = document.getElementById('password');
+    const btnSignUp = document.getElementById('btnSignUp');
+    const btnSignIn = document.getElementById('btnSignIn');
+    const btnSignOut = document.getElementById('btnSignOut');
+    const userEmail = document.getElementById('userEmail');
+
+    const mealSelect = document.getElementById('mealSelect');
+    const canteenSelect = document.getElementById('canteenSelect');
+    const ratingSelect = document.getElementById('ratingSelect');
+    const commentEl = document.getElementById('comment');
+    const anonymousEl = document.getElementById('anonymous');
+    const btnSubmit = document.getElementById('btnSubmit');
+    const btnRefresh = document.getElementById('btnRefresh');
+    const notificationsEl = document.getElementById('notifications');
+    const weeklyRaw = document.getElementById('weeklyRaw');
+
+    // Chart
+    let chart;
+    function renderChart(labels, data) {
+      if (!chart) {
+        const ctx = document.getElementById('chart').getContext('2d');
+        chart = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels,
+            datasets: [{ label: 'Avg rating', data }]
+          },
+          options: { scales: { y: { beginAtZero: true, max: 5 } } }
+        });
+      } else {
+        chart.data.labels = labels;
+        chart.data.datasets[0].data = data;
+        chart.update();
+      }
+    }
+
+    // Auth handlers
+    btnSignUp.onclick = async () => {
+      try {
+        const u = await auth.createUserWithEmailAndPassword(emailEl.value, passEl.value);
+        alert('Signed up: ' + u.user.email);
+      } catch (e) { alert(e.message); }
+    };
+    btnSignIn.onclick = async () => {
+      try {
+        const u = await auth.signInWithEmailAndPassword(emailEl.value, passEl.value);
+        alert('Signed in: ' + u.user.email);
+      } catch (e) { alert(e.message); }
+    };
+    btnSignOut.onclick = async () => {
+      await auth.signOut();
+    };
+
+    auth.onAuthStateChanged(async user => {
+      if (user) {
+        userEmail.textContent = user.email;
+        btnSignOut.style.display = 'inline-block';
+        // enable form when signed in
+        await loadMealsAndCanteens();
+        loadWeekly(); // default load
+      } else {
+        userEmail.textContent = 'Not signed in';
+        btnSignOut.style.display = 'none';
+        mealSelect.innerHTML = '';
+        canteenSelect.innerHTML = '';
+      }
+    });
+
+    // Load meals & canteens (from backend)
+    async function loadMealsAndCanteens(){
+      try {
+        const res1 = await fetch(API_URL + '/api/meals');
+        const meals = await res1.json();
+        mealSelect.innerHTML = meals.map(m => `<option value="${m._id}">${m._id} — ${m.slot} (${m.date})</option>`).join('');
+        // collect canteens from meals
+        const canteens = {};
+        meals.forEach(m => canteens[m.canteenId] = true);
+        canteenSelect.innerHTML = Object.keys(canteens).map(c => `<option value="${c}">${c}</option>`).join('');
+      } catch (err) {
+        console.error('Load meals error', err);
+      }
+    }
+
+    // Submit rating -> authenticate token -> call backend
+    btnSubmit.onclick = async () => {
+      const user = auth.currentUser;
+      if (!user) return alert('Sign in first');
+      const token = await user.getIdToken();
+      const payload = {
+        mealId: mealSelect.value,
+        canteenId: canteenSelect.value || 'canteen_01',
+        rating: parseInt(ratingSelect.value),
+        comment: commentEl.value,
+        anonymous: anonymousEl.checked
+      };
+      const res = await fetch(API_URL + '/api/ratings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        body: JSON.stringify(payload)
+      });
+      const j = await res.json();
+      if (res.ok) {
+        alert('Feedback submitted');
+        commentEl.value = '';
+        loadWeekly();
+      } else {
+        alert('Error: ' + (j.error || JSON.stringify(j)));
+      }
+    };
+
+    // Load weekly (chart)
+    async function loadWeekly(){
+      const user = auth.currentUser;
+      if (!user) return;
+      const token = await user.getIdToken();
+      const canteenId = canteenSelect.value || 'canteen_01';
+      const res = await fetch(API_URL + `/api/weekly-report?canteenId=${encodeURIComponent(canteenId)}`, {
+        headers: { 'Authorization':'Bearer ' + token }
+      });
+      const j = await res.json();
+      weeklyRaw.innerHTML = `<pre>${JSON.stringify(j, null, 2)}</pre>`;
+      // build chart using topMeals or daily
+      if (j.daily && j.daily.length) {
+        const labels = j.daily.map(d => d.date);
+        const data = j.daily.map(d => +d.avgRating.toFixed(2));
+        renderChart(labels, data);
+      } else if (j.topMeals && j.topMeals.length) {
+        const labels = j.topMeals.map(m => m.mealId);
+        const data = j.topMeals.map(m => +m.avgRating.toFixed(2));
+        renderChart(labels, data);
+      } else {
+        renderChart([], []);
+      }
+    }
+    btnRefresh.onclick = loadWeekly;
+
+    // Listen to Firestore notifications (realtime)
+    firestore.collection('notifications').orderBy('timestamp', 'desc').limit(30)
+      .onSnapshot(snap => {
+        if (snap.empty){ notificationsEl.innerHTML = '<div class="notif">No notifications yet</div>'; return; }
+        const html = [];
+        snap.forEach(doc => {
+          const d = doc.data();
+          const ts = d.timestamp && d.timestamp.toDate ? d.timestamp.toDate().toLocaleString() : '';
+          html.push(`<div class="notif"><strong>${d.type}</strong> — ${d.canteenId || ''} ${d.mealId ? '- ' + d.mealId : ''} ⭐ ${d.rating || ''} <br><small>${d.comment || ''}</small><br><small style="color:#777">${ts}</small></div>`);
+        });
+        notificationsEl.innerHTML = html.join('');
+      }, err => {
+        console.error('Realtime error', err);
+        notificationsEl.innerHTML = '<div class="notif">Realtime connection failed</div>';
+      });
+
+    // Initial load if signed in
+    // If user signs in, onAuthStateChanged will call loadMealsAndCanteens and loadWeekly
+  </script>
+</body>
+</html>
